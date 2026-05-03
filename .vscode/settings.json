@@ -1,0 +1,6 @@
+{
+    "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf",
+    "idf.flashType": "UART",
+    "idf.portWin": "COM6",
+    "python-envs.defaultEnvManager": "ms-python.python:system"
+}

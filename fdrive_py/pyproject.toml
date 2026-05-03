@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fdrive-py"
+version = "0.1.0"
+description = "Cross-platform host tools for the fdrive CAN motor driver"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pyserial>=3.5",
+    "python-can>=4.4",
+]
+
+[project.optional-dependencies]
+joystick = [
+    "pygame>=2.5",
+]
+
+[project.scripts]
+fdrive-config = "fdrive_py.cli.driver_config:main"
+fdrive-joystick = "fdrive_py.cli.joystick_can_control:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["fdrive_py*"]
