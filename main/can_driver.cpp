@@ -12,6 +12,7 @@
 #include "drive_management.h"
 #include "esp_check.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/task.h"
 #include "sense_service.h"
 
@@ -24,6 +25,7 @@ constexpr uint32_t kDefaultControlPeriodMs = 5;
 constexpr uint32_t kDefaultCommandTimeoutMs = 100;
 constexpr uint32_t kDefaultTaskStackSize = 4096;
 constexpr UBaseType_t kDefaultTaskPriority = 8;
+constexpr BaseType_t kControlCore = 1;
 constexpr size_t kCommandPayloadSize = 7;
 constexpr size_t kStatusPayloadSize = 8;
 constexpr size_t kTelemetryPayloadSize = 8;
@@ -391,34 +393,40 @@ static void can_driver_control_task_entry(void *arg)
 {
 	can_driver_t *driver = static_cast<can_driver_t *>(arg);
 	TickType_t frequency_window_start = xTaskGetTickCount();
+	const TickType_t wait_ticks = (driver->config.command_timeout_ms == 0U)
+		? portMAX_DELAY
+		: std::max<TickType_t>(1, ms_to_ticks(driver->config.command_timeout_ms));
+	int64_t last_control_time_us = 0;
 	uint32_t loops_in_window = 0U;
-	uint32_t loops_since_block = 0U;
 
 	while (!driver->stop_requested) {
+		(void)ulTaskNotifyTake(pdTRUE, wait_ticks);
+		if (driver->stop_requested) {
+			break;
+		}
+
 		if (driver->drive_control == nullptr || driver->config.sense_service == nullptr) {
-			vTaskDelay(1);
 			continue;
 		}
 
 		sense_service_snapshot_t snapshot = {};
 		if (sense_service_refresh_snapshot(driver->config.sense_service, &snapshot) != ESP_OK) {
-			vTaskDelay(1);
 			continue;
 		}
 
 		const float measured_current_amps = snapshot.fast_current_amps;
 
 		TickType_t now = xTaskGetTickCount();
-		TickType_t last_control_tick = 0;
+		const int64_t now_us = esp_timer_get_time();
 		taskENTER_CRITICAL(&driver->state_lock);
-		last_control_tick = driver->last_control_tick;
 		driver->last_control_tick = now;
 		taskEXIT_CRITICAL(&driver->state_lock);
 
-		uint32_t elapsed_ms = (uint32_t)((now - last_control_tick) * portTICK_PERIOD_MS);
-		if (last_control_tick == 0) {
-			elapsed_ms = driver->config.control_period_ms;
+		uint32_t elapsed_ms = driver->config.control_period_ms;
+		if (last_control_time_us != 0) {
+			elapsed_ms = (uint32_t)std::max<int64_t>(1, (now_us - last_control_time_us) / 1000);
 		}
+		last_control_time_us = now_us;
 
 		drive_control_output_t output = {};
 		(void)drive_control_update(driver->drive_control,
@@ -461,14 +469,6 @@ static void can_driver_control_task_entry(void *arg)
 					 (unsigned int)elapsed_ms);
 			frequency_window_start = now_after_update;
 			loops_in_window = 0U;
-		}
-
-		loops_since_block++;
-		if (loops_since_block >= 256U) {
-			loops_since_block = 0U;
-			vTaskDelay(1);
-		} else {
-			taskYIELD();
 		}
 	}
 
@@ -622,12 +622,13 @@ extern "C" esp_err_t can_driver_init(can_driver_t **out_driver, const can_driver
 		return err;
 	}
 
-	BaseType_t task_ok = xTaskCreate(can_driver_task_entry,
-									 "can_driver_task",
-									 driver->config.task_stack_size,
-									 driver,
-									 driver->config.task_priority,
-									 &driver->task);
+	BaseType_t task_ok = xTaskCreatePinnedToCore(can_driver_task_entry,
+											  "can_driver_task",
+											  driver->config.task_stack_size,
+											  driver,
+											  driver->config.task_priority,
+											  &driver->task,
+											  kControlCore);
 	if (task_ok != pdPASS) {
 		drive_management_service_deinit(driver->management_service);
 		driver->management_service = nullptr;
@@ -638,12 +639,13 @@ extern "C" esp_err_t can_driver_init(can_driver_t **out_driver, const can_driver
 		return ESP_ERR_NO_MEM;
 	}
 
-	BaseType_t control_task_ok = xTaskCreate(can_driver_control_task_entry,
-											 "can_control_task",
-											 driver->config.task_stack_size,
-											 driver,
-											 driver->config.task_priority + 1U,
-											 &driver->control_task);
+	BaseType_t control_task_ok = xTaskCreatePinnedToCore(can_driver_control_task_entry,
+												  "can_control_task",
+												  driver->config.task_stack_size,
+												  driver,
+												  driver->config.task_priority + 1U,
+												  &driver->control_task,
+												  kControlCore);
 	if (control_task_ok != pdPASS) {
 		driver->stop_requested = true;
 		if (driver->task != nullptr) {
@@ -692,6 +694,9 @@ extern "C" void can_driver_deinit(can_driver_t *driver)
 	}
 
 	driver->stop_requested = true;
+	if (driver->control_task != nullptr) {
+		xTaskNotifyGive(driver->control_task);
+	}
 	for (int attempt = 0; attempt < 5 && driver->task != nullptr; ++attempt) {
 		vTaskDelay(pdMS_TO_TICKS(5));
 	}

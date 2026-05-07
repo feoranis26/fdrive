@@ -11,6 +11,7 @@ from fdrive_py.driver_host import (
     DRIVE_COMMAND_CONFIG_SET,
     DRIVE_CONFIG_KEY_CAN_BASE_ID,
     DRIVE_CONFIG_KEY_CONTROL_MODE,
+    DRIVE_CONFIG_KEY_CURRENT_INVERTED,
     DRIVE_RESPONSE_ACK,
     DRIVE_RESPONSE_ERROR,
     DRIVE_RESPONSE_IN_PROGRESS,
@@ -56,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
             "pwm_error_clamp",
             "pwm_backoff_per_sec",
             "current_limit_amps",
+            "current_inverted",
             "current_ki_up",
             "current_ki_down",
             "current_overcurrent_margin_amps",
@@ -78,6 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
             "pwm_error_clamp",
             "pwm_backoff_per_sec",
             "current_limit_amps",
+            "current_inverted",
             "current_ki_up",
             "current_ki_down",
             "current_overcurrent_margin_amps",
@@ -195,6 +198,9 @@ def handle_get(args: argparse.Namespace) -> int:
         elif response_key == DRIVE_CONFIG_KEY_CONTROL_MODE:
             value = int.from_bytes(value_bytes, byteorder="little", signed=False)
             print(f"{config_key_name(response_key)} = {control_mode_name(value)} ({value})")
+        elif response_key == DRIVE_CONFIG_KEY_CURRENT_INVERTED:
+            value = int.from_bytes(value_bytes, byteorder="little", signed=False)
+            print(f"{config_key_name(response_key)} = {value}")
         else:
             value = struct.unpack("<f", value_bytes)[0]
             print(f"{config_key_name(response_key)} = {value:.6f}")
@@ -215,6 +221,8 @@ def handle_set(args: argparse.Namespace) -> int:
             value = parse_can_id(args.value)
         elif key == DRIVE_CONFIG_KEY_CONTROL_MODE:
             value = control_mode_from_name(args.value)
+        elif key == DRIVE_CONFIG_KEY_CURRENT_INVERTED:
+            value = int(args.value, 0)
         else:
             value = float(args.value)
         driver.send_config_set(key, value)

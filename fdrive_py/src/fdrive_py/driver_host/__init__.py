@@ -1,8 +1,25 @@
 from .driver_interface import DriverInterface
 from .factory import AVAILABLE_BACKENDS, create_transport
+from .config_profile import (
+    CONFIG_FIELD_BY_KEY,
+    CONFIG_FIELD_BY_NAME,
+    CONFIG_FIELDS,
+    CONTROL_MODE_CHOICES,
+    SCHEMA_VERSION,
+    ConfigField,
+    ConfigValue,
+    DriverConfigProfile,
+    config_field,
+    iter_config_fields_for_write,
+    normalize_config_values,
+)
 from .protocol import (
     COMMAND_OFFSET,
     CONTROL_OFFSET,
+    CONTROLLER_MODE_CALIBRATING,
+    CONTROLLER_MODE_DISABLED,
+    CONTROLLER_MODE_FAULT_LOCKOUT,
+    CONTROLLER_MODE_RUNNING,
     CONTROL_MODE_CURRENT,
     CONTROL_MODE_OTHER,
     CONTROL_MODE_PWM,
@@ -14,6 +31,7 @@ from .protocol import (
     DRIVE_CONFIG_KEY_CAN_BASE_ID,
     DRIVE_CONFIG_KEY_CONTROL_MODE,
     DRIVE_CONFIG_KEY_CURRENT_ERROR_CLAMP_AMPS,
+    DRIVE_CONFIG_KEY_CURRENT_INVERTED,
     DRIVE_CONFIG_KEY_CURRENT_KI_DOWN,
     DRIVE_CONFIG_KEY_CURRENT_KI_UP,
     DRIVE_CONFIG_KEY_CURRENT_LIMIT_AMPS,

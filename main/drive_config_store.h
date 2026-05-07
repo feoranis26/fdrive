@@ -24,6 +24,7 @@ typedef struct {
     float current_overcurrent_margin_amps;
     float current_overcurrent_margin_percent;
     float current_error_clamp_amps;
+    uint32_t current_inverted;
 } drive_config_defaults_t;
 
 esp_err_t drive_config_store_init(config_store_t **out_store, const drive_config_defaults_t *defaults);

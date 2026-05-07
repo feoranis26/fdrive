@@ -191,15 +191,22 @@ esp_err_t drive_control_update(drive_control_t *control,
 
         if (requested_magnitude <= control->applied_duty_cycle) {
             control->applied_duty_cycle = requested_magnitude;
-        } else if (current_limit > 0.0f && measured_magnitude > current_limit) {
-            const float current_error = (current_limit - measured_magnitude) / current_limit;
-            const float clamped_backoff_error = clamp_float(current_error, -error_clamp, 0.0f);
-            control->applied_duty_cycle += clamped_backoff_error * backoff_gain_per_s * elapsed_s;
-            control->applied_duty_cycle = clamp_float(control->applied_duty_cycle, 0.0f, requested_magnitude);
         } else {
-            const float error = requested_magnitude - control->applied_duty_cycle;
-            const float clamped_error = clamp_float(error, 0.0f, error_clamp);
-            control->applied_duty_cycle += clamped_error * ramp_gain_per_s * elapsed_s;
+            const float duty_error = requested_magnitude - control->applied_duty_cycle;
+            float control_error = duty_error;
+
+            if (current_limit > 0.0f) {
+                const float current_error = (current_limit - measured_magnitude) / current_limit;
+                control_error = std::min(duty_error, current_error);
+            }
+
+            if (control_error < 0.0f) {
+                const float clamped_backoff_error = clamp_float(control_error, -error_clamp, 0.0f);
+                control->applied_duty_cycle += clamped_backoff_error * backoff_gain_per_s * elapsed_s;
+            } else {
+                const float clamped_ramp_error = clamp_float(control_error, 0.0f, error_clamp);
+                control->applied_duty_cycle += clamped_ramp_error * ramp_gain_per_s * elapsed_s;
+            }
             control->applied_duty_cycle = clamp_float(control->applied_duty_cycle, 0.0f, requested_magnitude);
         }
 
@@ -218,8 +225,35 @@ esp_err_t drive_control_update(drive_control_t *control,
         return ESP_OK;
     }
 
-    const float command_magnitude = std::fabs(control->requested_duty_cycle);
-    const float target_current = clamp_float(command_magnitude * control->config.current_limit_amps, 0.0f, control->config.current_limit_amps);
+    const float requested_duty = clamp_float(control->requested_duty_cycle, -1.0f, 1.0f);
+    const float command_magnitude = std::fabs(requested_duty);
+    const int requested_sign = duty_sign(requested_duty);
+    const float current_limit = std::max(control->config.current_limit_amps, 0.0f);
+
+    if (command_magnitude <= 0.0f) {
+        control->integrator = 0.0f;
+        control->applied_duty_cycle = 0.0f;
+        control->applied_mode = control->requested_mode;
+        control->applied_sign = 0;
+        out_output->mode = control->requested_mode;
+        out_output->duty_cycle = 0.0f;
+        out_output->outputs_enabled = false;
+        out_output->controller_mode = DRIVE_CONTROLLER_MODE_RUNNING;
+        return ESP_OK;
+    }
+
+    const bool reversing = control->applied_duty_cycle > 0.0f &&
+                           (control->requested_mode != control->applied_mode ||
+                            (control->requested_mode == H_BRIDGE_DRIVE_ACCEL &&
+                             requested_sign != 0 &&
+                             requested_sign != control->applied_sign));
+    if (reversing) {
+        control->integrator = 0.0f;
+        control->applied_duty_cycle = 0.0f;
+        control->applied_sign = 0;
+    }
+
+    const float target_current = clamp_float(command_magnitude * current_limit, 0.0f, current_limit);
     const float measured_magnitude = std::fabs(measured_current_amps);
     const float absolute_threshold = target_current + control->config.current_overcurrent_margin_amps;
     const float percent_threshold = target_current * control->config.current_overcurrent_margin_percent;
@@ -243,12 +277,15 @@ esp_err_t drive_control_update(drive_control_t *control,
     control->integrator += clamped_error * ki_to_apply * elapsed_s;
     control->integrator = clamp_float(control->integrator, 0.0f, 1.0f);
 
-    float requested_duty = control->integrator;
-
-    control->applied_duty_cycle = clamp_float(requested_duty, 0.0f, 1.0f);
+    control->applied_duty_cycle = clamp_float(control->integrator, 0.0f, 1.0f);
     control->applied_mode = control->requested_mode;
-    control->applied_sign = (control->applied_duty_cycle > 0.0f) ? 1 : 0;
-    out_output->duty_cycle = control->applied_duty_cycle;
+    control->applied_sign = (control->applied_duty_cycle > 0.0f)
+                                ? ((control->requested_mode == H_BRIDGE_DRIVE_ACCEL) ? requested_sign : 1)
+                                : 0;
+    out_output->mode = control->requested_mode;
+    out_output->duty_cycle = (control->requested_mode == H_BRIDGE_DRIVE_ACCEL && requested_sign < 0)
+                                 ? -control->applied_duty_cycle
+                                 : control->applied_duty_cycle;
     out_output->outputs_enabled = control->applied_duty_cycle > 0.0f || target_current > 0.0f;
     out_output->controller_mode = DRIVE_CONTROLLER_MODE_RUNNING;
     return ESP_OK;

@@ -144,6 +144,31 @@ static esp_err_t config_store_reset_to_defaults_locked(config_store_t *store)
     return ESP_OK;
 }
 
+static bool config_store_entry_has_default_shape(const entry_t &entry, const entry_t &default_entry)
+{
+    return entry.type == default_entry.type && entry.bytes.size() == default_entry.bytes.size();
+}
+
+static bool config_store_merge_defaults_locked(config_store_t *store)
+{
+    if (store == nullptr) {
+        return false;
+    }
+
+    bool changed = false;
+    for (const entry_t &default_entry : store->defaults) {
+        entry_t *entry = config_store_find_entry(store, default_entry.key);
+        if (entry == nullptr) {
+            store->entries.push_back(default_entry);
+            changed = true;
+        } else if (!config_store_entry_has_default_shape(*entry, default_entry)) {
+            *entry = default_entry;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 static esp_err_t config_store_load_from_disk_locked(config_store_t *store)
 {
     FILE *file = fopen(store->config.file_path, "rb");
@@ -291,6 +316,7 @@ extern "C" esp_err_t config_store_init(config_store_t **out_store, const config_
         .partition_label = store->config.partition_label,
         .partition = nullptr,
         .format_if_mount_failed = store->config.format_if_mount_failed,
+        .read_only = false,
         .dont_mount = false,
         .grow_on_mount = false,
     };
@@ -309,12 +335,22 @@ extern "C" esp_err_t config_store_init(config_store_t **out_store, const config_
     }
 
     err = config_store_load_from_disk_locked(store);
+    bool should_save = false;
     if (err != ESP_OK && err != ESP_ERR_NOT_FOUND) {
         ESP_LOGW(TAG, "config load failed (%s), using defaults", esp_err_to_name(err));
         (void)config_store_reset_to_defaults_locked(store);
+        should_save = true;
     }
 
     if (err == ESP_ERR_NOT_FOUND) {
+        should_save = true;
+    } else if (err == ESP_OK) {
+        should_save = config_store_merge_defaults_locked(store);
+    } else {
+        err = ESP_OK;
+    }
+
+    if (should_save) {
         err = config_store_save_locked(store);
     } else {
         err = ESP_OK;

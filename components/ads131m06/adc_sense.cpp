@@ -1114,6 +1114,10 @@ static void adc_sense_sampling_task(void *arg)
              */
             adc_sense_update_average_locked(sense, &sample, status);
 
+            if (sense->_data_ready_task != NULL) {
+                xTaskNotifyGive(sense->_data_ready_task);
+            }
+
             samples_since_yield++;
             if (samples_since_yield >= ADC_SENSE_TASK_YIELD_INTERVAL) {
                 samples_since_yield = 0U;

@@ -46,6 +46,7 @@ void sense_service_deinit(sense_service_t *service);
 
 esp_err_t sense_service_get_snapshot(sense_service_t *service, sense_service_snapshot_t *out_snapshot);
 esp_err_t sense_service_refresh_snapshot(sense_service_t *service, sense_service_snapshot_t *out_snapshot);
+esp_err_t sense_service_reload_config(sense_service_t *service);
 bool sense_service_is_calibrating(sense_service_t *service);
 esp_err_t sense_service_start_calibration(sense_service_t *service, float known_bus_voltage);
 bool sense_service_take_calibration_result(sense_service_t *service, sense_service_calibration_result_t *out_result);

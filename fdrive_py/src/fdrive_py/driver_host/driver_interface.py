@@ -13,6 +13,7 @@ from .protocol import (
     DRIVE_COMMAND_CONFIG_SET,
     DRIVE_CONFIG_KEY_CAN_BASE_ID,
     DRIVE_CONFIG_KEY_CONTROL_MODE,
+    DRIVE_CONFIG_KEY_CURRENT_INVERTED,
     MEASUREMENT_OFFSET,
     MODE_ACCEL,
     MODE_BRAKE,
@@ -146,7 +147,7 @@ class DriverInterface:
         return None
 
     def send_config_set(self, key: int, value: int | float) -> None:
-        if key in (DRIVE_CONFIG_KEY_CAN_BASE_ID, DRIVE_CONFIG_KEY_CONTROL_MODE):
+        if key in (DRIVE_CONFIG_KEY_CAN_BASE_ID, DRIVE_CONFIG_KEY_CONTROL_MODE, DRIVE_CONFIG_KEY_CURRENT_INVERTED):
             self.send_config_set_u32(key, int(value))
         else:
             self.send_config_set_float(key, float(value))

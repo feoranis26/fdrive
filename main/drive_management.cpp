@@ -28,7 +28,16 @@ static command_router_response_context_t drive_management_make_response_context(
 
 static bool drive_management_key_is_u32(drive_config_key_t key)
 {
-    return key == DRIVE_CONFIG_KEY_CAN_BASE_ID || key == DRIVE_CONFIG_KEY_CONTROL_MODE;
+    return key == DRIVE_CONFIG_KEY_CAN_BASE_ID ||
+           key == DRIVE_CONFIG_KEY_CONTROL_MODE ||
+           key == DRIVE_CONFIG_KEY_CURRENT_INVERTED;
+}
+
+static bool drive_management_key_is_sense_config(drive_config_key_t key)
+{
+    return key == DRIVE_CONFIG_KEY_CURRENT_ZERO_CHANNEL_VOLTS ||
+           key == DRIVE_CONFIG_KEY_BUS_VOLTAGE_OFFSET_VOLTS ||
+           key == DRIVE_CONFIG_KEY_CURRENT_INVERTED;
 }
 
 static bool drive_management_key_is_control_tuning(drive_config_key_t key)
@@ -175,6 +184,10 @@ static esp_err_t drive_management_handle_config_set(drive_management_service_t *
 
     if (drive_management_key_is_control_tuning(key)) {
         drive_management_refresh_control_config(service);
+    }
+
+    if (drive_management_key_is_sense_config(key)) {
+        (void)sense_service_reload_config(service->sense_service);
     }
 
     return command_router_send_ok(response_ctx, payload, 5U);

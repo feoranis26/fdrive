@@ -48,6 +48,7 @@ typedef enum {
     DRIVE_CONFIG_KEY_PWM_RAMP_UP_PER_SEC = 0x0B,
     DRIVE_CONFIG_KEY_PWM_ERROR_CLAMP = 0x0C,
     DRIVE_CONFIG_KEY_PWM_BACKOFF_PER_SEC = 0x0D,
+    DRIVE_CONFIG_KEY_CURRENT_INVERTED = 0x0E,
 } drive_config_key_t;
 
 typedef enum {

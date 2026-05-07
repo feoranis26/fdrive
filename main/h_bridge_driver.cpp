@@ -7,12 +7,14 @@
 #include "esp_check.h"
 #include "freertos/FreeRTOS.h"
 
-static const char *TAG = "h_bridge";
-
 struct h_bridge_driver_t {
     h_bridge_driver_config_t _config;
     uint32_t _pwm_frequency_hz;
     uint32_t _max_duty;
+    uint32_t _a_hi_duty;
+    uint32_t _a_lo_duty;
+    uint32_t _b_lo_duty;
+    int _b_hi_level;
     portMUX_TYPE _state_lock;
     h_bridge_drive_mode_t _mode;
     float _target_norm;
@@ -75,13 +77,37 @@ static esp_err_t h_bridge_set_pwm(ledc_mode_t mode, ledc_channel_t channel, uint
     return ESP_OK;
 }
 
+static esp_err_t h_bridge_set_pwm_if_changed(h_bridge_driver_t *driver,
+                                             ledc_channel_t channel,
+                                             uint32_t *cached_duty,
+                                             uint32_t duty)
+{
+    if (*cached_duty == duty) {
+        return ESP_OK;
+    }
+
+    ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, channel, duty), "h_bridge", "set pwm failed");
+    *cached_duty = duty;
+    return ESP_OK;
+}
+
+static void h_bridge_set_gpio_level_if_changed(h_bridge_driver_t *driver, gpio_num_t gpio, int level)
+{
+    if (gpio < 0 || driver->_b_hi_level == level) {
+        return;
+    }
+
+    gpio_set_level(gpio, level);
+    driver->_b_hi_level = level;
+}
+
 static esp_err_t h_bridge_all_off(h_bridge_driver_t *driver)
 {
-    ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.a_hi_channel, 0U), "h_bridge", "disable A_HI failed");
-    ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.a_lo_channel, 0U), "h_bridge", "disable A_LO failed");
-    ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.b_lo_channel, 0U), "h_bridge", "disable B_LO failed");
+    ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.a_hi_channel, &driver->_a_hi_duty, 0U), "h_bridge", "disable A_HI failed");
+    ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.a_lo_channel, &driver->_a_lo_duty, 0U), "h_bridge", "disable A_LO failed");
+    ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.b_lo_channel, &driver->_b_lo_duty, 0U), "h_bridge", "disable B_LO failed");
 
-    h_bridge_set_gpio_level_if_valid(driver->_config.b_hi_gpio, 0);
+    h_bridge_set_gpio_level_if_changed(driver, driver->_config.b_hi_gpio, 0);
 
     return ESP_OK;
 }
@@ -89,20 +115,20 @@ static esp_err_t h_bridge_all_off(h_bridge_driver_t *driver)
 static esp_err_t h_bridge_apply_accel(h_bridge_driver_t *driver, float target_norm, uint32_t duty)
 {
     if (target_norm > 0.0f) {
-        ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.a_hi_channel, duty), "h_bridge", "set A_HI pwm failed");
-        ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.a_lo_channel, 0U), "h_bridge", "clear A_LO pwm failed");
-        ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.b_lo_channel, driver->_max_duty), "h_bridge", "set B_LO on failed");
+        ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.a_hi_channel, &driver->_a_hi_duty, driver->_max_duty), "h_bridge", "set A_HI pwm failed");
+        ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.a_lo_channel, &driver->_a_lo_duty, 0U), "h_bridge", "clear A_LO pwm failed");
+        ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.b_lo_channel, &driver->_b_lo_duty, duty), "h_bridge", "set B_LO on failed");
 
-        h_bridge_set_gpio_level_if_valid(driver->_config.b_hi_gpio, 0);
+        h_bridge_set_gpio_level_if_changed(driver, driver->_config.b_hi_gpio, 0);
         return ESP_OK;
     }
 
     if (target_norm < 0.0f) {
-        ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.a_hi_channel, 0U), "h_bridge", "clear A_HI pwm failed");
-        ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.a_lo_channel, duty), "h_bridge", "set A_LO pwm failed");
-        ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.b_lo_channel, 0U), "h_bridge", "clear B_LO pwm failed");
+        ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.a_hi_channel, &driver->_a_hi_duty, 0U), "h_bridge", "clear A_HI pwm failed");
+        ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.a_lo_channel, &driver->_a_lo_duty, duty), "h_bridge", "set A_LO pwm failed");
+        ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.b_lo_channel, &driver->_b_lo_duty, 0U), "h_bridge", "clear B_LO pwm failed");
 
-        h_bridge_set_gpio_level_if_valid(driver->_config.b_hi_gpio, 1);
+        h_bridge_set_gpio_level_if_changed(driver, driver->_config.b_hi_gpio, 1);
         return ESP_OK;
     }
 
@@ -117,10 +143,10 @@ static esp_err_t h_bridge_apply_brake(h_bridge_driver_t *driver, float target_no
         return h_bridge_all_off(driver);
     }
 
-    ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.a_hi_channel, 0U), "h_bridge", "clear A_HI pwm failed");
-    ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.a_lo_channel, duty), "h_bridge", "set A_LO brake pwm failed");
-    ESP_RETURN_ON_ERROR(h_bridge_set_pwm(driver->_config.ledc_mode, driver->_config.b_lo_channel, duty), "h_bridge", "set B_LO brake pwm failed");
-    h_bridge_set_gpio_level_if_valid(driver->_config.b_hi_gpio, 0);
+    ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.a_hi_channel, &driver->_a_hi_duty, 0U), "h_bridge", "clear A_HI pwm failed");
+    ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.a_lo_channel, &driver->_a_lo_duty, duty), "h_bridge", "set A_LO brake pwm failed");
+    ESP_RETURN_ON_ERROR(h_bridge_set_pwm_if_changed(driver, driver->_config.b_lo_channel, &driver->_b_lo_duty, duty), "h_bridge", "set B_LO brake pwm failed");
+    h_bridge_set_gpio_level_if_changed(driver, driver->_config.b_hi_gpio, 0);
 
     return ESP_OK;
 }
@@ -139,6 +165,10 @@ esp_err_t h_bridge_driver_init(h_bridge_driver_t **out_driver, const h_bridge_dr
     driver->_config = *config;
     driver->_pwm_frequency_hz = config->pwm_frequency_hz;
     driver->_max_duty = (1U << (uint32_t)config->duty_resolution) - 1U;
+    driver->_a_hi_duty = UINT32_MAX;
+    driver->_a_lo_duty = UINT32_MAX;
+    driver->_b_lo_duty = UINT32_MAX;
+    driver->_b_hi_level = -1;
     driver->_state_lock = (portMUX_TYPE)portMUX_INITIALIZER_UNLOCKED;
     driver->_mode = H_BRIDGE_DRIVE_ACCEL;
     driver->_target_norm = 0.0f;
@@ -239,7 +269,6 @@ esp_err_t h_bridge_set(h_bridge_driver_t *driver, h_bridge_drive_mode_t mode, fl
         return ESP_ERR_INVALID_ARG;
     }
 
-    float requested_target_norm = target_norm;
     target_norm = h_bridge_clampf(target_norm, -1.0f, 1.0f);
     uint32_t duty = (uint32_t)lroundf(fabsf(target_norm) * ((float)driver->_max_duty));
 

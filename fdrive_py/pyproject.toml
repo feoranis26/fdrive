@@ -11,6 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "pyserial>=3.5",
     "python-can>=4.4",
+    "pygame>=2.5",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +21,7 @@ joystick = [
 
 [project.scripts]
 fdrive-config = "fdrive_py.cli.driver_config:main"
+fdrive-gui = "fdrive_py.gui.main_window:main"
 fdrive-joystick = "fdrive_py.cli.joystick_can_control:main"
 
 [tool.setuptools]

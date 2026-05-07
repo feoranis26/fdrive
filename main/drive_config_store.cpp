@@ -72,6 +72,11 @@ esp_err_t drive_config_store_init(config_store_t **out_store, const drive_config
             .type = CONFIG_STORE_VALUE_TYPE_FLOAT,
             .value = {.f32 = defaults->current_error_clamp_amps},
         },
+        {
+            .key = DRIVE_CONFIG_KEY_CURRENT_INVERTED,
+            .type = CONFIG_STORE_VALUE_TYPE_U32,
+            .value = {.u32 = defaults->current_inverted},
+        },
     };
 
     const config_store_config_t config = {

@@ -31,6 +31,7 @@ struct sense_service_t {
     bool calibration_result_pending;
     float current_zero_channel_volts;
     float bus_voltage_offset_volts;
+    bool current_inverted;
     float fast_current_amps;
     float slow_current_amps;
     bool current_filters_initialized;
@@ -43,6 +44,11 @@ static float sense_service_current_from_channel_volts(float channel_volts, float
 {
     return (channel_volts - zero_offset_volts) /
            (SENSE_SERVICE_CURRENT_SENSE_RESISTOR_OHMS * SENSE_SERVICE_CURRENT_SENSE_AMPLIFIER_GAIN);
+}
+
+static float sense_service_apply_current_sign(float current_amps, bool current_inverted)
+{
+    return current_inverted ? -current_amps : current_amps;
 }
 
 static float sense_service_bus_from_channel_volts(float channel_volts)
@@ -85,11 +91,13 @@ static esp_err_t sense_service_refresh_snapshot_locked(sense_service_t *service,
 
     float current_zero_channel_volts = 0.0f;
     float bus_voltage_offset_volts = 0.0f;
+    bool current_inverted = false;
     bool calibrating = false;
 
     if (xSemaphoreTake(service->lock, portMAX_DELAY) == pdTRUE) {
         current_zero_channel_volts = service->current_zero_channel_volts;
         bus_voltage_offset_volts = service->bus_voltage_offset_volts;
+        current_inverted = service->current_inverted;
         calibrating = service->calibrating;
         xSemaphoreGive(service->lock);
     }
@@ -97,10 +105,12 @@ static esp_err_t sense_service_refresh_snapshot_locked(sense_service_t *service,
     out_snapshot->raw_current_channel_volts = fast_channel_volts[SENSE_SERVICE_CURRENT_CHANNEL];
     out_snapshot->raw_voltage_channel_volts = fast_channel_volts[SENSE_SERVICE_VOLTAGE_CHANNEL];
 
-    const float measured_current_fast_amps = sense_service_current_from_channel_volts(out_snapshot->raw_current_channel_volts,
-                                                                                       current_zero_channel_volts);
-    const float measured_current_slow_amps = sense_service_current_from_channel_volts(slow_channel_volts[SENSE_SERVICE_CURRENT_CHANNEL],
-                                                                                       current_zero_channel_volts);
+    const float measured_current_fast_amps = sense_service_apply_current_sign(
+        sense_service_current_from_channel_volts(out_snapshot->raw_current_channel_volts, current_zero_channel_volts),
+        current_inverted);
+    const float measured_current_slow_amps = sense_service_apply_current_sign(
+        sense_service_current_from_channel_volts(slow_channel_volts[SENSE_SERVICE_CURRENT_CHANNEL], current_zero_channel_volts),
+        current_inverted);
     out_snapshot->averaged_current_amps = measured_current_fast_amps;
 
     if (xSemaphoreTake(service->lock, portMAX_DELAY) == pdTRUE) {
@@ -211,14 +221,53 @@ esp_err_t sense_service_init(sense_service_t **out_service, const sense_service_
         return ESP_ERR_NO_MEM;
     }
 
-    (void)drive_config_store_get_float(service->config_store,
-                                       DRIVE_CONFIG_KEY_CURRENT_ZERO_CHANNEL_VOLTS,
-                                       &service->current_zero_channel_volts);
-    (void)drive_config_store_get_float(service->config_store,
-                                       DRIVE_CONFIG_KEY_BUS_VOLTAGE_OFFSET_VOLTS,
-                                       &service->bus_voltage_offset_volts);
+    esp_err_t err = sense_service_reload_config(service);
+    if (err != ESP_OK) {
+        vSemaphoreDelete(service->lock);
+        free(service);
+        return err;
+    }
 
     *out_service = service;
+    return ESP_OK;
+}
+
+esp_err_t sense_service_reload_config(sense_service_t *service)
+{
+    if (service == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    float current_zero_channel_volts = 0.0f;
+    float bus_voltage_offset_volts = 0.0f;
+    uint32_t current_inverted = 0U;
+
+    esp_err_t err = drive_config_store_get_float(service->config_store,
+                                                 DRIVE_CONFIG_KEY_CURRENT_ZERO_CHANNEL_VOLTS,
+                                                 &current_zero_channel_volts);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = drive_config_store_get_float(service->config_store,
+                                       DRIVE_CONFIG_KEY_BUS_VOLTAGE_OFFSET_VOLTS,
+                                       &bus_voltage_offset_volts);
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = drive_config_store_get_u32(service->config_store, DRIVE_CONFIG_KEY_CURRENT_INVERTED, &current_inverted);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (xSemaphoreTake(service->lock, portMAX_DELAY) != pdTRUE) {
+        return ESP_FAIL;
+    }
+
+    service->current_zero_channel_volts = current_zero_channel_volts;
+    service->bus_voltage_offset_volts = bus_voltage_offset_volts;
+    service->current_inverted = current_inverted != 0U;
+    service->latest_snapshot_valid = false;
+    xSemaphoreGive(service->lock);
     return ESP_OK;
 }
 

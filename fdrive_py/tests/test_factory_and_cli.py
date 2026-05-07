@@ -44,6 +44,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(create_transport_mock.call_args.kwargs["backend"], "usb-can")
         self.assertEqual(create_transport_mock.call_args.kwargs["port"], "COM9")
 
+    def test_gui_entry_module_imports(self) -> None:
+        from fdrive_py.gui import main_window
+
+        self.assertTrue(callable(main_window.main))
+
     @unittest.skipUnless(importlib.util.find_spec("pygame") is not None, "pygame not installed")
     def test_joystick_parser_accepts_socketcan_backend(self) -> None:
         from fdrive_py.cli import joystick_can_control

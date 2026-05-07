@@ -38,6 +38,7 @@
 #define LED_STATUS_TASK_STACK_SIZE 3072
 #define LED_STATUS_TASK_PRIORITY 4
 #define LED_STATUS_UPDATE_MS 25
+#define APP_BACKGROUND_CORE 0
 
 #define LED_GREEN_R 0
 #define LED_GREEN_G 32
@@ -276,6 +277,7 @@ extern "C" void app_main(void)
         .current_overcurrent_margin_amps = 1.0f,
         .current_overcurrent_margin_percent = 0.10f,
         .current_error_clamp_amps = 50.0f,
+        .current_inverted = 0U,
     };
     ESP_ERROR_CHECK(drive_config_store_init(&config_store, &config_defaults));
 
@@ -319,12 +321,13 @@ extern "C" void app_main(void)
     can_sniffer_handle = can_queue->get_handle(0U, 0x1FFFFFFFU);
     ESP_ERROR_CHECK(can_sniffer_handle != nullptr ? ESP_OK : ESP_ERR_NO_MEM);
 
-    BaseType_t led_task_ok = xTaskCreate(led_status_task,
-                                         "led_status_task",
-                                         LED_STATUS_TASK_STACK_SIZE,
-                                         NULL,
-                                         LED_STATUS_TASK_PRIORITY,
-                                         NULL);
+    BaseType_t led_task_ok = xTaskCreatePinnedToCore(led_status_task,
+                                                     "led_status_task",
+                                                     LED_STATUS_TASK_STACK_SIZE,
+                                                     NULL,
+                                                     LED_STATUS_TASK_PRIORITY,
+                                                     NULL,
+                                                     APP_BACKGROUND_CORE);
     if (led_task_ok != pdPASS) {
         ESP_LOGE(TAG, "Failed to create led_status_task");
     }
@@ -397,7 +400,13 @@ extern "C" void app_main(void)
         };
         ESP_ERROR_CHECK(can_serial_bridge_init(&serial_bridge, &bridge_cfg));
 
-        BaseType_t task_ok = xTaskCreate(adc_debug_task, "adc_debug_task", 3072, sense_service, 4, NULL);
+        BaseType_t task_ok = xTaskCreatePinnedToCore(adc_debug_task,
+                                 "adc_debug_task",
+                                 3072,
+                                 sense_service,
+                                 4,
+                                 NULL,
+                                 APP_BACKGROUND_CORE);
         if (task_ok != pdPASS) {
             ESP_LOGE(TAG, "Failed to create adc_debug_task");
         }
